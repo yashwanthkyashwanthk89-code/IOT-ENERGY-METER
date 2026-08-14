@@ -1,0 +1,115 @@
+#define BLYNK_TEMPLATE_ID "TMPL3gKxCrLz3"
+#define BLYNK_TEMPLATE_NAME "Energy Meter1"
+
+#define BLYNK_PRINT Serial
+
+#include "EmonLib.h"
+#include <EEPROM.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// 16x2 LCD
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Calibration
+const float vCalibration = 41.5;
+const float currCalibration = 0.15;//
+
+// WiFi + Blynk
+const char auth[] = "fJsrOzu-y2leL6oDATLm49ecg1ZVFLmJ";
+const char ssid[] = "OPPO F23 5G";
+const char pass[] = "yashwanth18";
+
+// EmonLib instance
+EnergyMonitor emon;
+
+// Timer
+BlynkTimer timer;
+
+// Energy calculation
+float kWh = 0.0;
+unsigned long lastMillis = millis();
+
+// EEPROM address
+const int addrKWh = 0;
+
+void setup()
+{
+  Serial.begin(115200);
+
+  // Start Blynk WiFi
+  Blynk.begin(auth, ssid, pass);
+
+  // ******** IMPORTANT FOR LCD ********
+  Wire.begin(27, 26);   // SDA = 27, SCL = 26
+  // ***********************************
+
+  // LCD
+  lcd.init();
+  lcd.backlight();
+
+  // EEPROM
+  EEPROM.begin(32);
+  EEPROM.get(addrKWh, kWh);
+  if (isnan(kWh))
+      kWh = 0.0;
+
+  // Emon calibration
+  emon.voltage(35, vCalibration, 1.7); 
+  emon.current(34, currCalibration);
+
+  // Update every 5 seconds
+  timer.setInterval(5000L, sendEnergyData);
+
+  delay(500);
+}
+
+void loop()
+{
+  Blynk.run();
+  timer.run();
+}
+
+void sendEnergyData()
+{
+  emon.calcVI(20, 2000);
+
+  // Energy calculation
+  unsigned long currentMillis = millis();
+  kWh += emon.apparentPower * (currentMillis - lastMillis) / 3600000000.0;
+  lastMillis = currentMillis;
+
+  // Debug
+  Serial.printf("V: %.2f  I: %.4f  P: %.2f  kWh: %.5f\n",
+                 emon.Vrms, emon.Irms, emon.apparentPower, kWh);
+
+  // Store to EEPROM
+  EEPROM.put(addrKWh, kWh);
+  EEPROM.commit();
+
+  // Send to Blynk
+  Blynk.virtualWrite(V0, emon.Vrms);
+  Blynk.virtualWrite(V1, emon.Irms);
+  Blynk.virtualWrite(V2, emon.apparentPower);
+  Blynk.virtualWrite(V3, kWh);
+
+  // ------------------------------
+  // UPDATE 16x2 LCD DISPLAY
+  // ------------------------------
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print("V:");
+  lcd.print(emon.Vrms, 1);
+  lcd.print(" I:");
+  lcd.print(emon.Irms, 2);
+
+  lcd.setCursor(0, 1);
+  lcd.print("P:");
+  lcd.print(emon.apparentPower, 0);
+  lcd.print("W E:");
+  lcd.print(kWh, 2);
+}
